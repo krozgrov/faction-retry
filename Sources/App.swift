@@ -171,6 +171,7 @@ struct Activity: Identifiable {
                 let result = try await readGame(activate: true)
                 guard generation == run else { return }
                 let state = result.scene
+                let successConfirmed = evidence.observe(state, words: result.words)
                 switch state {
                 case .factionLocked:
                     unknownSince = nil
@@ -192,11 +193,12 @@ struct Activity: Identifiable {
                     guard SceneReader.nameIsVisible(settings.expectedName, words: result.words) else { throw RetryFailure.message("The optional character-name check does not match the editor. Your options were left untouched.") }
                     if schedule.remaining(now: Date(), interval: settings.intervalSeconds) > 0 { try await waitUntilDue(); continue }
                     guard let button = SceneReader.creationButton(result.words) else { throw RetryFailure.message("The final creation button could not be located.") }
+                    guard let fullName = SceneReader.preparedName(result.words) else { throw RetryFailure.message("The character's full name could not be read. Move the pointer away from the name fields and try again.") }
                     // Save a conservative next-attempt time before sending input,
                     // including if Stop or a crash occurs between down and up.
                     schedule.recordAttempt(at: Date().addingTimeInterval(1)); persistSchedule()
                     try await WindowInput.click(button, reading: result)
-                    evidence.sentAttempt(); attempts = evidence.attempts
+                    evidence.sentAttempt(name: fullName); attempts = evidence.attempts
                     set(.running, "Attempt \(attempts) sent. Reading WoW’s response…")
                     try await sleep(2)
                 case .throttled:
@@ -215,17 +217,12 @@ struct Activity: Identifiable {
                     }
                 case .characterList:
                     unknownSince = nil
-                    if evidence.sawList() {
-                        let name = settings.expectedName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !name.isEmpty {
-                            let expected = name.lowercased().split(separator: " ").map(String.init)
-                            let all = result.words.map(\.key)
-                            guard expected.allSatisfy(all.contains) else { throw RetryFailure.message("The character list appeared, but the requested name could not be confirmed. Check it in WoW.") }
-                        }
-                        finished(.complete, "Character list detected after your creation attempt. Retrying has stopped; check your character in WoW.")
+                    if successConfirmed {
+                        finished(.complete, "Your character's full name was confirmed on two consecutive character-list readings. Retrying has stopped.")
                         return
                     }
                     if !evidence.submissionPending { finished(.paused, "WoW is at the character list. Prepare your character with its chosen options, then Start. Nothing was created by this run."); return }
+                    guard let name = evidence.submittedName, SceneReader.characterNameIsVisible(name, words: result.words) else { throw RetryFailure.message("The character list appeared, but the submitted full name could not be confirmed. Retrying is paused; check your character in WoW.") }
                     try await sleep(1)
                 case .otherError:
                     throw RetryFailure.message("WoW displayed a different message. Paused with the dialog intact so you can inspect it.")

@@ -10,7 +10,7 @@ The app reads the selected WoW window, recognizes the final **Finish** button, a
 
 When it sees **“This faction is currently unavailable on this ruleset due to population imbalance,”** it clicks **Okay** and requires two readings confirming that the dialog is gone. If it remains, it retries Okay up to three times, then pauses. Once dismissed, it waits for the configured interval, and tries again. If the app starts with that message already open, it waits a full interval before the next submission.
 
-After pressing Finish, the app allows up to 30 seconds for WoW to return its response. The editor can remain visible during that wait; the app does not send another Finish click. After a submission, two successive character-list readings stop the run. The app does not click **Enter World**. An optional name check is available under **More settings**; otherwise check the character list yourself to confirm the desired character.
+After pressing Finish, the app allows up to 30 seconds for WoW to return its response. The editor can remain visible during that wait; the app does not send another Finish click. Before submission the app reads the full prepared name. After a submission, two consecutive character-list readings containing that full name stop the run. The app does not click **Enter World**. An optional name check is available under **More settings**; the full submitted name is always checked before reporting success.
 
 ## One-time access setup
 
