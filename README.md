@@ -1,63 +1,56 @@
-# WoW Character Retry
+# Faction Retry
 
-<img src="Assets/AppIcon.png" alt="WoW Character Retry icon" width="160">
+<img src="Assets/AppIcon.png" alt="Faction Retry icon" width="128">
 
-A native macOS app that retries creation of your prepared World of Warcraft character when faction population restrictions prevent creation.
+A macOS app that retries World of Warcraft character creation while a faction is restricted by population imbalance. Prepare your character once, set a retry interval, and start the app.
 
-## What it does
+The app uses your current name and character options. It presses **Finish**, reads the response, and dismisses the known imbalance dialog. It confirms the dialog is gone before continuing. The default interval is two minutes and can be changed in the app.
 
-- Uses your current character options and name without editing them.
-- Waits a configurable minimum between attempts (120 seconds by default).
-- Recognizes the faction-imbalance message, clicks Okay, and verifies the dialog has disappeared on two readings before continuing.
-- Stops after two character-list readings following a submission, checking the requested name when the optional name check is enabled. It never clicks Enter World.
-- Pauses on unfamiliar screens or messages instead of guessing.
-- Supports longer throttle cooldowns and optional relaunch through Battle.net. After relaunch it pauses so you can restore any unsaved character options.
-- Processes screenshots locally in memory with Apple text recognition; requires no API key or extra packages.
+After a submission, two consecutive character-list readings stop retries. If you enabled the optional name check, the name must also appear on the list. The app leaves you at character selection.
 
-## Requirements
+## Build and run
 
-Apple Silicon, macOS 14 or newer, Python 3, and Xcode Command Line Tools. WoW must be windowed, visible, and fully on one display.
-
-## Build
-
-Build and test without replacing an installed app:
+Requires an Apple Silicon Mac, macOS 14 or newer, Python 3, and Xcode Command Line Tools.
 
 ```sh
-python3 build.py --test --output '/tmp/WoW Character Retry.app'
-```
-
-To install, quit the existing retry app first, then run:
-
-```sh
+git clone https://github.com/krozgrov/faction-retry.git
+cd faction-retry
 python3 build.py --test --output '/Applications/WoW Character Retry.app'
+open '/Applications/WoW Character Retry.app'
 ```
 
-Build outside cloud-synced folders: syncing tools may attach metadata that interferes with app signing. The build script locally signs the app and verifies the signature. A rebuild can invalidate earlier macOS permission approvals; finish building before granting access to the final installed copy.
+The installed app is currently named **WoW Character Retry**. Quit an existing copy before rebuilding. Build outside cloud-synced folders, which can attach metadata that interferes with app signing.
 
-## Use
+1. Leave WoW windowed with your chosen character and name ready. Keep the window visible and fully on one display.
+2. Approve Screen Recording and Device Control/Accessibility for the installed app when requested.
+3. Set the interval and press **Start**. An existing imbalance dialog can stay open.
 
-Open **WoW Character Retry**, prepare your character in WoW, choose the interval, and press **Start**. Approve Screen Recording and Device Control/Accessibility when needed. **Read screen** checks recognition without clicking. **What the app sees (no clicks)** shows the captured image and recognized text.
+Use **Read screen** to check recognition without sending clicks. Expand **What the app sees (no clicks)** to inspect the captured image and text.
 
-Click **Stop** or press **Shift–Command–period** to stop. Stop the retry app before editing a name or interacting with character creation yourself.
+Press **Stop** or **Shift–Command–period** to stop. Stop the app before editing your character yourself. The app can bring WoW forward when an attempt is due.
 
-See the [user guide](docs/USER_GUIDE.md) for setup, timing, cooldowns, privacy, and recovery details.
+The default game path targets **WoW: Forever**. Check the WoW path and Battle.net version label under **More settings** for your installation.
 
-## Project layout
+## Errors and recovery
 
-| Path | Purpose |
-| --- | --- |
-| `Sources/Core.swift` | Screen classification, timing, settings, and success evidence |
-| `Sources/ScreenAccess.swift` | Visible-window capture, guarded clicks, and cancellable OCR worker |
-| `Sources/OCRHelper.swift` | Apple Vision text recognition from in-memory image data |
-| `Sources/App.swift` | Interface, retry loop, and Battle.net recovery |
-| `Tests/` | Screen decisions, timing, success guards, OCR, cancellation, timeout, and pipe tests |
-| `Assets/` | App icon and editable raster source |
-| `build.py` | Compile, test, assemble, and locally sign the app |
+Unknown messages, disconnected sessions, and failed recognition pause the run. After pressing Finish, the app waits up to 30 seconds for a recognized response and then pauses without submitting again.
 
-## Validation and limits
+Recognized throttle errors trigger a longer cooldown. Optional Battle.net recovery quits WoW normally, waits, verifies the selected game version, and clicks Play. It then pauses so you can restore any unsaved character options. Cooldowns and attempt times survive app restarts.
 
-Version **2.0.2** passed **56 checks**. Live testing verified submission, recognition of the actual faction-imbalance message, dismissal, confirmation that the dialog was gone, and return to the retry countdown. The success guards were tested; successful character creation was not observed during that test session. Actual throttle-triggered Battle.net recovery remains unverified.
+See the [user guide](docs/USER_GUIDE.md) for settings and permission troubleshooting. Rebuilding the locally signed app can invalidate earlier macOS permission approvals.
 
-The app captures the visible display area occupied by the selected game or launcher window. Keep it unobscured. It does not store screenshots, upload screen data, read credentials, or modify game files. The optional name check depends on text recognition; a cursor or text caret can obscure a name and cause a safe pause.
+## Privacy
 
-This is an independent utility and is not affiliated with Blizzard Entertainment.
+Screen images stay in memory and are processed locally with Apple Vision. The app captures the visible display area occupied by WoW or Battle.net; keep other windows out of that area. It does not save screenshots, upload screen data, store credentials, or modify game files. No API key is needed.
+
+## Test status
+
+Version 2.0.2 passed 56 automated checks covering screen recognition, retry timing, success detection, cooldowns, and OCR worker failures. Live testing verified a creation attempt, recognition and dismissal of the imbalance dialog, confirmation that it had closed, and return to the countdown.
+
+Successful creation and throttle-triggered Battle.net recovery have not been observed in live testing. A cursor or text caret over a name can interfere with the optional name check and cause a pause.
+
+## Source
+
+The app is written in Swift with SwiftUI, ScreenCaptureKit, and Vision. `Sources/Core.swift` contains the recognition and timing rules; `Sources/App.swift` runs the interface and retry loop. `Sources/ScreenAccess.swift` handles capture and clicks, and `Sources/OCRHelper.swift` runs text recognition. Tests are in `Tests/`; `build.py` compiles, tests, and locally signs the app.
+
+Faction Retry is an independent project and is not affiliated with Blizzard Entertainment.
