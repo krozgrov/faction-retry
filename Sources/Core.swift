@@ -1,0 +1,162 @@
+import Foundation
+import CoreGraphics
+
+struct ReadWord: Codable, Equatable {
+    var text: String
+    var rect: CGRect
+    var key: String { text.lowercased().filter { $0.isLetter || $0.isNumber } }
+}
+
+enum GameScene: String, Codable {
+    case creation = "Character ready"
+    case factionLocked = "Faction imbalance"
+    case throttled = "Too many attempts"
+    case characterList = "Character list"
+    case disconnected = "Disconnected"
+    case processing = "Waiting for WoW"
+    case otherError = "Unrecognized message"
+    case unknown = "Screen not recognized"
+}
+
+struct VisibleWindow {
+    let id: UInt32
+    let frame: CGRect
+    let layer: Int
+    let alpha: Double
+}
+enum WindowHitTest {
+    static func topWindow(at point: CGPoint, windows: [VisibleWindow]) -> VisibleWindow? {
+        windows.first { $0.layer == 0 && $0.alpha > 0.01 && $0.frame.width > 1 && $0.frame.height > 1 && $0.frame.contains(point) }
+    }
+}
+enum CaptureGeometry {
+    static func crop(window: CGRect, display: CGRect) -> CGRect? {
+        guard display.insetBy(dx: -1, dy: -1).contains(window) else { return nil }
+        return window.offsetBy(dx: -display.minX, dy: -display.minY)
+    }
+}
+
+struct SceneReader {
+    static func button(_ keys: [String], in words: [ReadWord], region: CGRect? = nil) -> ReadWord? {
+        let matches = words.filter { keys.contains($0.key) && (region == nil || region!.contains(CGPoint(x: $0.rect.midX, y: $0.rect.midY))) }
+        guard let first = matches.first else { return nil }
+        // The full-window and enhanced-dialog passes can see the same control.
+        // Distinct controls remain ambiguous and are never selected arbitrarily.
+        return matches.dropFirst().allSatisfy { abs($0.rect.midX-first.rect.midX) < 0.03 && abs($0.rect.midY-first.rect.midY) < 0.03 } ? first : nil
+    }
+    static let bottom = CGRect(x: 0.1, y: 0, width: 0.9, height: 0.23)
+    static let middle = CGRect(x: 0.23, y: 0.25, width: 0.54, height: 0.45)
+    static func creationButton(_ words: [ReadWord]) -> ReadWord? { button(["finish", "createcharacter"], in: words, region: bottom) }
+    static func okay(_ words: [ReadWord]) -> ReadWord? { button(["okay", "ok", "0kay", "oiccly"], in: words, region: middle) }
+    static func scene(_ words: [ReadWord]) -> GameScene {
+        let central = words.filter { middle.intersects($0.rect) }.map(\.text).joined(separator: " ").lowercased()
+        let all = words.map(\.text).joined(separator: " ").lowercased()
+        let hasDialog = okay(words) != nil || button(["cancel", "accept", "continue", "reconnect", "retry"], in: words, region: middle) != nil
+        if central.contains("population imbalance") || (central.contains("faction") && central.contains("imbalance")) { return .factionLocked }
+        let throttle = ["currently throttled", "too many attempts", "too many requests", "too quickly", "rate limit"]
+        if hasDialog && throttle.contains(where: central.contains) { return .throttled }
+        if central.contains("disconnected") || (central.contains("connection") && central.contains("lost")) { return .disconnected }
+        if hasDialog { return .otherError }
+        if button(["enterworld"], in: words, region: bottom) != nil { return .characterList }
+        if central.contains("creating character") || central.contains("retrieving character") || central.contains("logging in") || central.contains("connecting") { return .processing }
+        // On a character list, Create Character opens an editor; it is not a final
+        // submission button. Require editor-specific name/customization text.
+        let hasEditor = all.contains("full name") || all.contains("customization") || words.contains { $0.key == "fullname" || ($0.key == "name" && $0.rect.midY < 0.35) }
+        if creationButton(words) != nil && hasEditor { return .creation }
+        return .unknown
+    }
+    static func nameIsVisible(_ name: String, words: [ReadWord]) -> Bool {
+        let expected = name.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        if expected.isEmpty { return true }
+        let visible = words.filter { $0.rect.midY > 0.75 || ($0.rect.midY < 0.3 && $0.key != "createcharacter") }.map(\.key)
+        return expected.allSatisfy { visible.contains($0) }
+    }
+    static func launchButton(_ words: [ReadWord], product: String) -> ReadWord? {
+        guard let play = button(["play"], in: words) else { return nil }
+        let required = product.lowercased().filter { $0.isLetter || $0.isNumber }
+        // The selected version must be immediately above the Play control.
+        // A game name elsewhere in the launcher is insufficient evidence.
+        let choices = words.filter { $0.rect.midY > play.rect.midY && $0.rect.midY < play.rect.midY + 0.18 && abs($0.rect.midX-play.rect.midX) < 0.18 }
+        guard choices.contains(where: { $0.key == required }) else { return nil }
+        return play
+    }
+}
+
+struct RetrySettings: Codable, Equatable {
+    var intervalSeconds: Double = 120
+    var cooldownMinutes: Double = 10
+    var restartOnThrottle = true
+    var maximumRestarts = 3
+    var bringForward = true
+    var expectedName = ""
+    var wowPath = "/Applications/World of Warcraft/_forever_/World of Warcraft.app"
+    var launcherPath = "/Applications/Battle.net.app"
+    var productLabel = "WoW: Forever"
+    var validationError: String? {
+        if !intervalSeconds.isFinite || !(5...86400).contains(intervalSeconds) { return "Retry interval must be between 5 seconds and 24 hours." }
+        if !cooldownMinutes.isFinite || !(1...1440).contains(cooldownMinutes) { return "Cooldown must be between 1 minute and 24 hours." }
+        if !(1...10).contains(maximumRestarts) { return "Maximum restarts must be between 1 and 10." }
+        if productLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Enter the Battle.net game version shown above Play." }
+        return nil
+    }
+    func cooldown(restartNumber: Int) -> TimeInterval {
+        min(86400, cooldownMinutes * 60 * pow(2, Double(max(0, restartNumber-1))))
+    }
+}
+
+struct RetrySchedule: Codable, Equatable {
+    var lastAttempt: Date?
+    var notBefore: Date?
+    func remaining(now: Date, interval: TimeInterval) -> TimeInterval {
+        max(0, max(lastAttempt?.addingTimeInterval(interval).timeIntervalSince(now) ?? 0, notBefore?.timeIntervalSince(now) ?? 0))
+    }
+    mutating func recordAttempt(at date: Date) { lastAttempt = date }
+    mutating func deferUntil(_ date: Date) { notBefore = max(notBefore ?? .distantPast, date) }
+}
+
+struct RunEvidence {
+    var attempts = 0
+    var submissionPending = false
+    var submittedAt: Date?
+    var listReadings = 0
+    mutating func sentAttempt(at date: Date = Date()) { attempts += 1; submissionPending = true; submittedAt = date; listReadings = 0 }
+    func waitingForResponse(at now: Date, timeout: TimeInterval = 30) -> Bool {
+        submissionPending && submittedAt.map { now.timeIntervalSince($0) < timeout } == true
+    }
+    mutating func sawFailure() { submissionPending = false; submittedAt = nil; listReadings = 0 }
+    mutating func sawList() -> Bool {
+        guard submissionPending else { return false }
+        listReadings += 1
+        return listReadings >= 2
+    }
+    mutating func resetAfterRestart() { submissionPending = false; submittedAt = nil; listReadings = 0 }
+}
+
+enum DismissalResult { case waiting, closed, changed }
+struct DismissalEvidence {
+    let expected: GameScene
+    private var clearReadings = 0
+    init(expected: GameScene) { self.expected = expected }
+    mutating func observe(_ scene: GameScene) -> DismissalResult {
+        if scene == .creation || scene == .characterList {
+            clearReadings += 1
+            return clearReadings >= 2 ? .closed : .waiting
+        }
+        clearReadings = 0
+        if scene == expected || scene == .processing || scene == .unknown { return .waiting }
+        return .changed
+    }
+}
+
+enum RetryFailure: LocalizedError {
+    case message(String)
+    case captureDenied
+    case ocrTimeout
+    var errorDescription: String? {
+        switch self {
+        case .message(let value): return value
+        case .captureDenied: return "Screen access is missing. Use Enable access, then approve this app in macOS."
+        case .ocrTimeout: return "Text recognition exceeded 12 seconds. The reader was stopped; no new click was sent."
+        }
+    }
+}
