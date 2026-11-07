@@ -71,6 +71,39 @@ struct SceneReader {
         let visible = words.filter { $0.rect.midY > 0.75 || ($0.rect.midY < 0.3 && $0.key != "createcharacter") }.map(\.key)
         return expected.allSatisfy { visible.contains($0) }
     }
+    static func preparedName(_ words: [ReadWord]) -> String? {
+        guard let label = words.first(where: { $0.key == "fullname" && $0.rect.midY > 0.8 }) else { return nil }
+        let candidates = words.filter {
+            (0.3...0.7).contains($0.rect.midX) && $0.rect.midY < label.rect.minY &&
+            $0.rect.midY > label.rect.minY - 0.06 && !$0.key.isEmpty
+        }.sorted { $0.rect.minX < $1.rect.minX }
+        var unique: [ReadWord] = []
+        for word in candidates {
+            if !unique.contains(where: { $0.key == word.key && abs($0.rect.midX-word.rect.midX) < 0.03 && abs($0.rect.midY-word.rect.midY) < 0.015 }) { unique.append(word) }
+        }
+        guard let first = unique.first, unique.allSatisfy({ abs($0.rect.midY-first.rect.midY) < 0.015 }) else { return nil }
+        return unique.map(\.text).joined(separator: " ")
+    }
+    static func characterNameIsVisible(_ name: String, words: [ReadWord]) -> Bool {
+        let expected = name.split(whereSeparator: \.isWhitespace).map { String($0).lowercased().filter { $0.isLetter || $0.isNumber } }.filter { !$0.isEmpty }
+        guard !expected.isEmpty else { return false }
+        // Match the complete name within one OCR line; separate characters on
+        // different rows must never combine into a matching full name.
+        for anchor in words {
+            let row = words.filter { abs($0.rect.midY-anchor.rect.midY) < min($0.rect.height, anchor.rect.height) * 0.5 }.sorted { $0.rect.minX < $1.rect.minX }
+            var unique: [ReadWord] = []
+            for word in row {
+                if !unique.contains(where: { $0.key == word.key && abs($0.rect.midX-word.rect.midX) < 0.03 }) { unique.append(word) }
+            }
+            let tokens = unique.flatMap { $0.text.split(whereSeparator: \.isWhitespace).map { String($0).lowercased().filter { $0.isLetter || $0.isNumber } } }
+            if tokens.count >= expected.count {
+                for index in 0...(tokens.count-expected.count) {
+                    if Array(tokens[index..<(index+expected.count)]) == expected { return true }
+                }
+            }
+        }
+        return false
+    }
     static func launchButton(_ words: [ReadWord], product: String) -> ReadWord? {
         guard let play = button(["play"], in: words) else { return nil }
         let required = product.lowercased().filter { $0.isLetter || $0.isNumber }
@@ -119,17 +152,19 @@ struct RunEvidence {
     var submissionPending = false
     var submittedAt: Date?
     var listReadings = 0
-    mutating func sentAttempt(at date: Date = Date()) { attempts += 1; submissionPending = true; submittedAt = date; listReadings = 0 }
+    private(set) var submittedName: String?
+    mutating func sentAttempt(name: String, at date: Date = Date()) { attempts += 1; submissionPending = true; submittedAt = date; submittedName = name; listReadings = 0 }
     func waitingForResponse(at now: Date, timeout: TimeInterval = 30) -> Bool {
         submissionPending && submittedAt.map { now.timeIntervalSince($0) < timeout } == true
     }
-    mutating func sawFailure() { submissionPending = false; submittedAt = nil; listReadings = 0 }
-    mutating func sawList() -> Bool {
-        guard submissionPending else { return false }
+    mutating func sawFailure() { submissionPending = false; submittedAt = nil; submittedName = nil; listReadings = 0 }
+    mutating func observe(_ scene: GameScene, words: [ReadWord]) -> Bool {
+        guard submissionPending, scene == .characterList, let name = submittedName,
+              SceneReader.characterNameIsVisible(name, words: words) else { listReadings = 0; return false }
         listReadings += 1
         return listReadings >= 2
     }
-    mutating func resetAfterRestart() { submissionPending = false; submittedAt = nil; listReadings = 0 }
+    mutating func resetAfterRestart() { sawFailure() }
 }
 
 enum DismissalResult { case waiting, closed, changed }

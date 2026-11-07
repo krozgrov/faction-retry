@@ -6,7 +6,7 @@ A macOS app that retries World of Warcraft character creation while a faction is
 
 The app uses your current name and character options. It presses **Finish**, reads the response, and dismisses the known imbalance dialog. It confirms the dialog is gone before continuing. The default interval is two minutes and can be changed in the app.
 
-After a submission, two consecutive character-list readings stop retries. If you enabled the optional name check, the name must also appear on the list. The app leaves you at character selection.
+Before submitting, the app reads the full prepared name. After a submission, two consecutive character-list readings containing that full name stop retries. The app leaves you at character selection.
 
 ## Build and run
 
