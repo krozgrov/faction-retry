@@ -1,6 +1,17 @@
 import Foundation
 @main struct FakeReader {
     static func main() {
+        if let index = CommandLine.arguments.firstIndex(of: "--ownership") {
+            do {
+                let ownership = try RetryOwnership(at: URL(fileURLWithPath: CommandLine.arguments[index+1]))
+                withExtendedLifetime(ownership) {
+                    FileHandle.standardOutput.write(Data("locked\n".utf8))
+                    if CommandLine.arguments.contains("--hold") { sleep(60) }
+                }
+                return
+            } catch OwnershipFailure.alreadyRunning { exit(73) }
+            catch { exit(74) }
+        }
         if CommandLine.arguments.contains("--hang") { sleep(60); return }
         _ = FileHandle.standardInput.readDataToEndOfFile()
         if CommandLine.arguments.contains("--bad-json") { print("bad"); return }
