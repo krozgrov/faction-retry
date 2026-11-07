@@ -438,7 +438,24 @@ struct RetryView: View {
 @MainActor final class RetryDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     var model: RetryModel!
+    private var ownership: RetryOwnership?
     func applicationDidFinishLaunching(_ notification: Notification) {
+        do {
+            let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("WoWRetry")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            ownership = try RetryOwnership(at: directory.appendingPathComponent("instance.lock"))
+        } catch OwnershipFailure.alreadyRunning {
+            NSWorkspace.shared.runningApplications.first(where: {
+                $0.processIdentifier != ProcessInfo.processInfo.processIdentifier && $0.bundleIdentifier == Bundle.main.bundleIdentifier
+            })?.activate(options: [.activateAllWindows])
+            NSApp.terminate(nil)
+            return
+        } catch {
+            let alert = NSAlert(); alert.messageText = "Could not reserve the retry app"
+            alert.informativeText = "The app cannot safely start without its single-instance lock. Check access to its Application Support folder."
+            alert.runModal(); NSApp.terminate(nil)
+            return
+        }
         model = RetryModel()
         let menu = NSMenu(); let root = NSMenuItem(); menu.addItem(root); let submenu = NSMenu()
         submenu.addItem(withTitle: "Quit WoW Character Retry", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); root.submenu = submenu; NSApp.mainMenu = menu

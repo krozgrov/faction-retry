@@ -27,6 +27,8 @@ The installed app is currently named **WoW Character Retry**. Quit an existing c
 
 Use **Read screen** to check recognition without sending clicks. Expand **What the app sees (no clicks)** to inspect the captured image and text.
 
+Only one copy of the app can run at a time. Opening another copy brings the existing instance forward.
+
 Press **Stop** or **Shift–Command–period** to stop. Stop the app before editing your character yourself. The app can bring WoW forward when an attempt is due.
 
 The default game path targets **WoW: Forever**. Check the WoW path and Battle.net version label under **More settings** for your installation.

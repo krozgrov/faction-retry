@@ -116,6 +116,28 @@ import UniformTypeIdentifiers
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let fake = root.appendingPathComponent("FakeReader")
         let helper = root.appendingPathComponent("WoWTextReader")
+        let lockDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: lockDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: lockDirectory) }
+        let lockPath = lockDirectory.appendingPathComponent("instance.lock")
+        var owner: RetryOwnership? = try RetryOwnership(at: lockPath)
+        let competitor = Process(); competitor.executableURL = fake; competitor.arguments = ["--ownership", lockPath.path]
+        competitor.standardOutput = FileHandle.nullDevice
+        try competitor.run(); competitor.waitUntilExit()
+        check(competitor.terminationStatus == 73, "A second process cannot acquire the running app's lock")
+        withExtendedLifetime(owner) {}
+        owner = nil
+        let crashedOwner = Process(); crashedOwner.executableURL = fake; crashedOwner.arguments = ["--ownership", lockPath.path, "--hold"]
+        let lockReady = Pipe(); crashedOwner.standardOutput = lockReady
+        try crashedOwner.run()
+        check(String(data: lockReady.fileHandleForReading.availableData, encoding: .utf8) == "locked\n", "A new owner acquires the lock after a normal exit")
+        Darwin.kill(crashedOwner.processIdentifier, SIGKILL); crashedOwner.waitUntilExit()
+        let recoveredOwner = try RetryOwnership(at: lockPath)
+        withExtendedLifetime(recoveredOwner) { check(true, "A crashed app cannot leave a stale ownership lock") }
+        let unsafePath = lockDirectory.appendingPathComponent("link.lock")
+        try FileManager.default.createSymbolicLink(at: unsafePath, withDestinationURL: lockPath)
+        do { _ = try RetryOwnership(at: unsafePath); fatalError("Symlink accepted as a lock") }
+        catch { check(true, "The ownership lock refuses a symlink") }
         let large = try await OCRProcess(executableURL: fake, timeout: 5).read(Data())
         check(large.count == 1500, "Large OCR output drains without a blocked pipe")
         do { _ = try await OCRProcess(executableURL: fake, arguments: ["--bad-json"], timeout: 5).read(Data()); fatalError("Bad JSON was accepted") }

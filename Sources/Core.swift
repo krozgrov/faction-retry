@@ -1,5 +1,30 @@
 import Foundation
 import CoreGraphics
+import Darwin
+
+enum OwnershipFailure: Error { case alreadyRunning, unavailable }
+
+final class RetryOwnership {
+    private let descriptor: Int32
+    init(at url: URL) throws {
+        let descriptor = Darwin.open(url.path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw OwnershipFailure.unavailable }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_uid == getuid(), (info.st_mode & S_IFMT) == S_IFREG,
+              fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
+            close(descriptor); throw OwnershipFailure.unavailable
+        }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            let busy = errno == EWOULDBLOCK
+            close(descriptor)
+            throw busy ? OwnershipFailure.alreadyRunning : OwnershipFailure.unavailable
+        }
+        self.descriptor = descriptor
+    }
+    // Keep the file: unlinking it would allow another process to lock a new
+    // inode while this process still owns the old one. Exit releases the lock.
+    deinit { close(descriptor) }
+}
 
 struct ReadWord: Codable, Equatable {
     var text: String
