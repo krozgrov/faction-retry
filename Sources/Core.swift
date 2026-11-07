@@ -4,6 +4,13 @@ import Darwin
 
 enum OwnershipFailure: Error { case alreadyRunning, unavailable }
 
+enum InputInterruption {
+    static let automationMarker: Int64 = 0x4652545259
+    static func shouldPause(marker: Int64, targetIsFrontmost: Bool, pointerInsideTarget: Bool, keyboard: Bool) -> Bool {
+        marker != automationMarker && (targetIsFrontmost || (!keyboard && pointerInsideTarget))
+    }
+}
+
 final class RetryOwnership {
     private let descriptor: Int32
     init(at url: URL) throws {

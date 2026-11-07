@@ -19,7 +19,7 @@ import UniformTypeIdentifiers
         NSGraphicsContext.restoreGraphicsState()
         return bitmap.representation(using: .png, properties: [:])!
     }
-    static func main() async throws {
+    @MainActor static func main() async throws {
         let finish = word("Finish", x: 0.83, y: 0.03)
         let gameWindow = VisibleWindow(id: 1, frame: CGRect(x: -2800, y: 100, width: 1200, height: 800), layer: 0, alpha: 1)
         let otherMonitor = VisibleWindow(id: 2, frame: CGRect(x: 0, y: 0, width: 1440, height: 900), layer: 0, alpha: 1)
@@ -113,6 +113,29 @@ import UniformTypeIdentifiers
         check(!delayed.waitingForResponse(at: now.addingTimeInterval(30)) && delayed.submissionPending, "Expiry pauses and does not authorize a duplicate submission")
         delayed.sawFailure()
         check(!delayed.waitingForResponse(at: now.addingTimeInterval(5)) && !delayed.submissionPending, "A recognized failure clears the response wait")
+        check(InputInterruption.shouldPause(marker: 0, targetIsFrontmost: true, pointerInsideTarget: false, keyboard: true), "Typing in the game pauses retries")
+        check(InputInterruption.shouldPause(marker: 0, targetIsFrontmost: false, pointerInsideTarget: true, keyboard: false), "Clicking into the game pauses retries")
+        check(!InputInterruption.shouldPause(marker: InputInterruption.automationMarker, targetIsFrontmost: true, pointerInsideTarget: true, keyboard: false), "The app's tagged click does not pause its own run")
+        check(!InputInterruption.shouldPause(marker: 0, targetIsFrontmost: false, pointerInsideTarget: false, keyboard: true), "Typing in another app does not pause the countdown")
+        let testDomain = "local.factionretry.tests." + UUID().uuidString
+        let testDefaults = UserDefaults(suiteName: testDomain)!
+        defer { testDefaults.removePersistentDomain(forName: testDomain) }
+        let modelDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: modelDirectory) }
+        let model = RetryModel(defaults: testDefaults, logDirectory: modelDirectory)
+        model.settings.intervalSeconds = 75
+        for notification in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
+            model.phase = .waiting; model.countdown = "01:00"
+            NSWorkspace.shared.notificationCenter.post(name: notification, object: nil)
+            check(model.phase == .paused && model.countdown == "—", "A sleep or session notification pauses the actual retry model")
+        }
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        check(model.phase == .paused && model.settings.intervalSeconds == 75, "Waking never automatically resumes or resets the chosen interval")
+        model.phase = .running; model.interrupt("Manual interaction")
+        check(model.phase == .paused, "Manual interruption stops the actual retry model")
+        let activityCount = model.activities.count
+        model.interrupt("Repeated interruption")
+        check(model.activities.count == activityCount, "Repeated interruption notifications do not flood a stopped run")
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let fake = root.appendingPathComponent("FakeReader")
         let helper = root.appendingPathComponent("WoWTextReader")

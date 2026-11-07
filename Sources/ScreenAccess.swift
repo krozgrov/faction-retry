@@ -3,6 +3,18 @@ import ScreenCaptureKit
 import ImageIO
 import UniformTypeIdentifiers
 
+enum SessionSafety {
+    static var isActive: Bool {
+        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+        return session[kCGSessionOnConsoleKey as String] as? Bool == true &&
+            session[kCGSessionLoginDoneKey as String] as? Bool == true &&
+            session["CGSSessionScreenIsLocked"] as? Bool != true
+    }
+    static func requireActive() throws {
+        guard isActive else { throw RetryFailure.message("The Mac session is locked or inactive. Unlock it, then press Start to resume.") }
+    }
+}
+
 struct WindowReading {
     let id: CGWindowID
     let pid: pid_t
@@ -122,6 +134,7 @@ actor WindowReader {
 
 @MainActor enum WindowInput {
     static func activate(_ app: NSRunningApplication) async throws {
+        try SessionSafety.requireActive()
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { return }
         NSApp.yieldActivation(to: app)
         app.activate(from: NSRunningApplication.current, options: [.activateAllWindows])
@@ -140,6 +153,7 @@ actor WindowReader {
     }
     static func click(_ word: ReadWord, reading: WindowReading) async throws {
         try Task.checkCancellation()
+        try SessionSafety.requireActive()
         guard Date().timeIntervalSince(reading.capturedAt) < 8 else { throw RetryFailure.message("The screen reading was too old to click reliably. Try Read screen again.") }
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == reading.pid else { throw RetryFailure.message("Another app took focus. No click was sent.") }
         let point = CGPoint(x: reading.frame.minX + reading.frame.width * word.rect.midX, y: reading.frame.minY + reading.frame.height * (1-word.rect.midY))
@@ -159,13 +173,18 @@ actor WindowReader {
             throw RetryFailure.message("The WoW window moved after it was read. No click was sent.")
         }
         // Games may cache the pointer position independently of mouse-down.
-        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+        let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)
+        move?.setIntegerValueField(.eventSourceUserData, value: InputInterruption.automationMarker)
+        move?.post(tap: .cghidEventTap)
         try await Task.sleep(nanoseconds: 120_000_000)
         try Task.checkCancellation()
+        try SessionSafety.requireActive()
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == reading.pid else { throw RetryFailure.message("Another app took focus. No click was sent.") }
         guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left), let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { throw RetryFailure.message("Could not prepare the click.") }
         down.setIntegerValueField(.mouseEventClickState, value: 1)
         up.setIntegerValueField(.mouseEventClickState, value: 1)
+        down.setIntegerValueField(.eventSourceUserData, value: InputInterruption.automationMarker)
+        up.setIntegerValueField(.eventSourceUserData, value: InputInterruption.automationMarker)
         down.post(tap: .cghidEventTap)
         // A posted mouse-down is always paired with mouse-up, even after Stop.
         try? await Task.sleep(nanoseconds: 60_000_000)

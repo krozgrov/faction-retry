@@ -34,28 +34,68 @@ struct Activity: Identifiable {
     private var evidence = RunEvidence()
     private var powerAssertion: IOPMAssertionID = 0
     private var hasPowerAssertion = false
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private let logURL: URL
+    private var targetFrame: CGRect?
+    private var inputMonitors: [Any] = []
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var lockObserver: NSObjectProtocol?
 
-    init() {
-        settings = UserDefaults.standard.data(forKey: "v2.settings").flatMap { try? JSONDecoder().decode(RetrySettings.self, from: $0) } ?? RetrySettings()
-        schedule = UserDefaults.standard.data(forKey: "v2.schedule").flatMap { try? JSONDecoder().decode(RetrySchedule.self, from: $0) } ?? RetrySchedule()
-        restarts = UserDefaults.standard.integer(forKey: "v2.restarts")
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("WoWRetry")
+    init(defaults: UserDefaults = .standard, logDirectory: URL? = nil, observeUserActivity: Bool = true) {
+        self.defaults = defaults
+        settings = defaults.data(forKey: "v2.settings").flatMap { try? JSONDecoder().decode(RetrySettings.self, from: $0) } ?? RetrySettings()
+        schedule = defaults.data(forKey: "v2.schedule").flatMap { try? JSONDecoder().decode(RetrySchedule.self, from: $0) } ?? RetrySchedule()
+        restarts = defaults.integer(forKey: "v2.restarts")
+        let directory = logDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("WoWRetry")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         logURL = directory.appendingPathComponent("activity.log")
         clickAccess = CGPreflightPostEventAccess()
         screenAccess = CGPreflightScreenCaptureAccess()
         record("App opened. No game actions have been sent.")
-        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 47 && event.modifierFlags.intersection([.command, .shift]) == [.command, .shift] { Task { @MainActor in self?.stop("Stopped with Shift–Command–period.") } }
-        }
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        if observeUserActivity { installActivityObservers() }
+    }
+    private func installActivityObservers() {
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .leftMouseDragged, .rightMouseDragged], handler: { [weak self] event in
+            MainActor.assumeIsolated { self?.handleGlobalInput(event) }
+        }) { inputMonitors.append(monitor) }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             if event.keyCode == 47 && event.modifierFlags.intersection([.command, .shift]) == [.command, .shift] { self?.stop("Stopped with Shift–Command–period."); return nil }
             return event
+        }) { inputMonitors.append(monitor) }
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
+            workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.interrupt("The Mac slept or the session became inactive. Press Start to resume.") }
+            })
+        }
+        lockObserver = DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.interrupt("The Mac was locked. Unlock it, then press Start to resume.") }
         }
     }
-    func persistSettings() { if let data = try? JSONEncoder().encode(settings) { UserDefaults.standard.set(data, forKey: "v2.settings") } }
+    deinit {
+        inputMonitors.forEach(NSEvent.removeMonitor)
+        workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
+        if let lockObserver { DistributedNotificationCenter.default().removeObserver(lockObserver) }
+    }
+    private func handleGlobalInput(_ event: NSEvent) {
+        if event.type == .keyDown && event.keyCode == 47 && event.modifierFlags.intersection([.command, .shift]) == [.command, .shift] {
+            interrupt("Stopped with Shift–Command–period."); return
+        }
+        guard phase.busy else { return }
+        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleURL?.standardizedFileURL.resolvingSymlinksInPath()
+        let gameURL = URL(fileURLWithPath: settings.wowPath).standardizedFileURL.resolvingSymlinksInPath()
+        let launcherURL = URL(fileURLWithPath: settings.launcherPath).standardizedFileURL.resolvingSymlinksInPath()
+        let targetIsFrontmost = frontmost == gameURL || (phase == .restarting && frontmost == launcherURL)
+        let inside = event.cgEvent.map { targetFrame?.contains($0.location) == true } ?? false
+        if InputInterruption.shouldPause(marker: event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0, targetIsFrontmost: targetIsFrontmost, pointerInsideTarget: inside, keyboard: event.type == .keyDown) {
+            interrupt("You interacted with the game. Retrying is paused; press Start when you are ready.")
+        }
+    }
+    func interrupt(_ reason: String) {
+        guard phase.busy else { return }
+        stop(reason)
+    }
+    func persistSettings() { if let data = try? JSONEncoder().encode(settings) { defaults.set(data, forKey: "v2.settings") } }
     private func persistSchedule() { if let data = try? JSONEncoder().encode(schedule) { defaults.set(data, forKey: "v2.schedule") } }
     func record(_ value: String) {
         activities.insert(Activity(text: value), at: 0)
@@ -91,6 +131,7 @@ struct Activity: Identifiable {
         return app
     }
     private func readGame(activate: Bool) async throws -> WindowReading {
+        try SessionSafety.requireActive()
         let app = try game()
         if activate {
             if settings.bringForward || targetWindow == nil { try await WindowInput.activate(app) }
@@ -99,6 +140,7 @@ struct Activity: Identifiable {
         let result = try await reader.read(pid: app.processIdentifier, windowID: targetWindow)
         try Task.checkCancellation()
         targetWindow = result.id
+        targetFrame = result.frame
         screenAccess = true; screen = result.scene.rawValue
         lastReadText = result.words.map(\.text).joined(separator: "\n")
         lastReadImage = result.imageData
@@ -137,6 +179,8 @@ struct Activity: Identifiable {
     }
     func start() {
         guard !phase.busy else { return }
+        guard SessionSafety.isActive else { set(.paused, "Unlock your Mac and return to this user session before starting."); return }
+        guard AXIsProcessTrusted() else { set(.needsAccess, "Enable Device Control/Accessibility so manual game input can pause retries safely."); return }
         if let invalid = settings.validationError { set(.paused, invalid); return }
         clickAccess = CGPreflightPostEventAccess()
         guard FileManager.default.isExecutableFile(atPath: settings.wowPath + "/Contents/MacOS/World of Warcraft") else { set(.paused, "Choose a valid WoW application in Settings."); return }
@@ -468,6 +512,7 @@ struct RetryView: View {
     func applicationWillTerminate(_ notification: Notification) { model?.stop("App closed. No further game input will be sent.") }
 }
 
+#if !RETRY_TESTS
 @main struct RetryApplication {
     static func main() {
         MainActor.assumeIsolated {
@@ -475,3 +520,4 @@ struct RetryView: View {
         }
     }
 }
+#endif
