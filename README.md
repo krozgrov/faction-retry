@@ -29,7 +29,7 @@ Use **Read screen** to check recognition without sending clicks. Expand **What t
 
 Only one copy of the app can run at a time. Opening another copy brings the existing instance forward.
 
-Press **Stop** or **Shift–Command–period** to stop. Stop the app before editing your character yourself. The app can bring WoW forward when an attempt is due.
+Press **Stop** or **Shift–Command–period** to stop. Manual typing or clicks in the game pause retries. Locking the Mac, sleep, and switching users also pause the run; press Start to resume. The app can bring WoW forward when an attempt is due.
 
 The default game path targets **WoW: Forever**. Check the WoW path and Battle.net version label under **More settings** for your installation.
 

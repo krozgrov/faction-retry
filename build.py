@@ -11,8 +11,10 @@ ROOT = pathlib.Path(__file__).resolve().parent
 def run(*args):
     subprocess.run([str(arg) for arg in args], check=True)
 
-def compile_swift(output, files, frameworks):
+def compile_swift(output, files, frameworks, defines=()):
     command = ['xcrun', 'swiftc', '-swift-version', '5', '-O', '-target', 'arm64-apple-macosx14.0']
+    for define in defines:
+        command.extend(['-D', define])
     command.extend(ROOT / name for name in files)
     command.extend(['-o', output])
     for framework in frameworks:
@@ -31,7 +33,7 @@ def main():
     compile_swift(build / 'WoWTextReader', ['Sources/Core.swift', 'Sources/OCRHelper.swift'], ['Cocoa', 'Vision', 'ImageIO', 'CoreImage'])
     if args.test:
         compile_swift(build / 'FakeReader', ['Sources/Core.swift', 'Tests/FakeReader.swift'], ['Cocoa'])
-        compile_swift(build / 'RetryTests', ['Sources/Core.swift', 'Sources/ScreenAccess.swift', 'Tests/TestMain.swift'], ['Cocoa', 'ScreenCaptureKit', 'ImageIO'])
+        compile_swift(build / 'RetryTests', ['Sources/Core.swift', 'Sources/ScreenAccess.swift', 'Sources/App.swift', 'Tests/TestMain.swift'], ['Cocoa', 'SwiftUI', 'ScreenCaptureKit', 'IOKit', 'ImageIO'], ['RETRY_TESTS'])
         run(build / 'RetryTests', build)
     app = args.output.resolve()
     (app / 'Contents' / 'MacOS').mkdir(parents=True, exist_ok=True)
@@ -46,8 +48,8 @@ def main():
         'CFBundleName': 'WoW Retry Preview' if args.preview else 'WoW Character Retry',
         'CFBundleDisplayName': 'WoW Retry Preview' if args.preview else 'WoW Character Retry',
         'CFBundlePackageType': 'APPL',
-        'CFBundleShortVersionString': '2.0.4',
-        'CFBundleVersion': '6',
+        'CFBundleShortVersionString': '2.0.5',
+        'CFBundleVersion': '7',
         'LSMinimumSystemVersion': '14.0',
         'NSHighResolutionCapable': True,
         'NSScreenCaptureUsageDescription': 'Read only the selected WoW or Battle.net window locally to recognize creation results and launcher controls.',
