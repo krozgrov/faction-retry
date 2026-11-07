@@ -136,6 +136,37 @@ import UniformTypeIdentifiers
         let activityCount = model.activities.count
         model.interrupt("Repeated interruption")
         check(model.activities.count == activityCount, "Repeated interruption notifications do not flood a stopped run")
+        let capturedAt = Date()
+        let clickReading = WindowReading(id: gameWindow.id, pid: 42, frame: gameWindow.frame, capturedAt: capturedAt, words: [finish], imageData: Data())
+        for mode in 0..<6 {
+            var state = ClickSnapshot(now: capturedAt, frontmostPID: 42, windows: [gameWindow], sessionActive: true)
+            var delivered: [CGEventType] = []
+            let environment = ClickEnvironment(snapshot: { state }, post: { delivered.append($0.type) }, sleep: { _ in
+                switch mode {
+                case 0: state.windows = [VisibleWindow(id: gameWindow.id, frame: gameWindow.frame.offsetBy(dx: 20, dy: 0), layer: 0, alpha: 1)]
+                case 1: state.windows = [VisibleWindow(id: 9, frame: blocking.frame, layer: 10, alpha: 1), gameWindow]
+                case 2: state.frontmostPID = 99
+                case 3: state.now = capturedAt.addingTimeInterval(9)
+                case 4: state.sessionActive = false
+                default: throw CancellationError()
+                }
+            })
+            do { try await WindowInput.click(finish, reading: clickReading, environment: environment); fatalError("Unsafe click accepted") }
+            catch { check(delivered == [.mouseMoved], "Movement, cover, focus, stale image, session loss, or cancellation during pointer delay blocks mouse-down") }
+        }
+        var delivered: [CGEventType] = []
+        var markers: [Int64] = []
+        let stableClick = ClickEnvironment(snapshot: { ClickSnapshot(now: capturedAt, frontmostPID: 42, windows: [gameWindow], sessionActive: true) }, post: { delivered.append($0.type); markers.append($0.getIntegerValueField(.eventSourceUserData)) }, sleep: { _ in })
+        try await WindowInput.click(finish, reading: clickReading, environment: stableClick)
+        check(delivered == [.mouseMoved, .leftMouseDown, .leftMouseUp] && markers.allSatisfy { $0 == InputInterruption.automationMarker }, "A stable target gets exactly one tagged down/up pair")
+        delivered = []
+        var cancelEnvironment = stableClick
+        cancelEnvironment.sleep = { duration in if duration == 60_000_000 { try await Task.sleep(nanoseconds: duration) } }
+        let clickTask = Task { try await WindowInput.click(finish, reading: clickReading, environment: cancelEnvironment) }
+        while !delivered.contains(.leftMouseDown) { await Task.yield() }
+        clickTask.cancel()
+        do { try await clickTask.value; fatalError("Cancelled click did not stop") }
+        catch is CancellationError { check(delivered.last == .leftMouseUp, "Stop after mouse-down still releases the mouse button") }
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let fake = root.appendingPathComponent("FakeReader")
         let helper = root.appendingPathComponent("WoWTextReader")
