@@ -58,7 +58,7 @@ struct VisibleWindow {
 }
 enum WindowHitTest {
     static func topWindow(at point: CGPoint, windows: [VisibleWindow]) -> VisibleWindow? {
-        windows.first { $0.layer == 0 && $0.alpha > 0.01 && $0.frame.width > 1 && $0.frame.height > 1 && $0.frame.contains(point) }
+        windows.first { $0.layer >= 0 && $0.alpha > 0.01 && $0.frame.width > 1 && $0.frame.height > 1 && $0.frame.contains(point) }
     }
 }
 enum CaptureGeometry {

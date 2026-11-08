@@ -132,7 +132,48 @@ actor WindowReader {
     }
 }
 
+struct ClickSnapshot {
+    var now: Date
+    var frontmostPID: pid_t?
+    var windows: [VisibleWindow]
+    var sessionActive: Bool
+}
+
+enum WindowInventory {
+    static func current() -> [VisibleWindow] {
+        let raw = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return raw.compactMap { value in
+            guard let id = value[kCGWindowNumber as String] as? UInt32,
+                  let bounds = value[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: bounds) else { return nil }
+            return VisibleWindow(id: id, frame: frame, layer: value[kCGWindowLayer as String] as? Int ?? -1, alpha: value[kCGWindowAlpha as String] as? Double ?? 1)
+        }
+    }
+}
+
+@MainActor struct ClickEnvironment {
+    var snapshot: () -> ClickSnapshot
+    var post: (CGEvent) -> Void
+    var sleep: (UInt64) async throws -> Void
+    static var live: ClickEnvironment {
+        ClickEnvironment(snapshot: { ClickSnapshot(now: Date(), frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier, windows: WindowInventory.current(), sessionActive: SessionSafety.isActive) }, post: { $0.post(tap: .cghidEventTap) }, sleep: { try await Task.sleep(nanoseconds: $0) })
+    }
+}
+
 @MainActor enum WindowInput {
+    private static func validate(_ reading: WindowReading, point: CGPoint, snapshot: ClickSnapshot) throws {
+        guard snapshot.sessionActive else { throw RetryFailure.message("The Mac session is locked or inactive. No click was sent.") }
+        let age = snapshot.now.timeIntervalSince(reading.capturedAt)
+        guard age >= 0 && age < 8 else { throw RetryFailure.message("The screen reading was too old to click reliably. Try Read screen again.") }
+        guard snapshot.frontmostPID == reading.pid else { throw RetryFailure.message("Another app took focus. No click was sent.") }
+        guard let top = WindowHitTest.topWindow(at: point, windows: snapshot.windows), top.id == reading.id else {
+            throw RetryFailure.message("Another window covers the button in WoW. No click was sent.")
+        }
+        guard abs(top.frame.minX-reading.frame.minX) < 1, abs(top.frame.minY-reading.frame.minY) < 1,
+              abs(top.frame.width-reading.frame.width) < 1, abs(top.frame.height-reading.frame.height) < 1 else {
+            throw RetryFailure.message("The WoW window moved after it was read. No click was sent.")
+        }
+    }
     static func activate(_ app: NSRunningApplication) async throws {
         try SessionSafety.requireActive()
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { return }
@@ -151,44 +192,30 @@ actor WindowReader {
         }
         throw RetryFailure.message("WoW could not be brought forward. Select its window and resume.")
     }
-    static func click(_ word: ReadWord, reading: WindowReading) async throws {
+    static func click(_ word: ReadWord, reading: WindowReading, environment: ClickEnvironment? = nil) async throws {
         try Task.checkCancellation()
-        try SessionSafety.requireActive()
-        guard Date().timeIntervalSince(reading.capturedAt) < 8 else { throw RetryFailure.message("The screen reading was too old to click reliably. Try Read screen again.") }
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == reading.pid else { throw RetryFailure.message("Another app took focus. No click was sent.") }
+        let environment = environment ?? .live
+        guard word.rect.width > 0, word.rect.height > 0, CGRect(x: 0, y: 0, width: 1, height: 1).contains(word.rect) else {
+            throw RetryFailure.message("The recognized button is outside the game image. No click was sent.")
+        }
         let point = CGPoint(x: reading.frame.minX + reading.frame.width * word.rect.midX, y: reading.frame.minY + reading.frame.height * (1-word.rect.midY))
-        let raw = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-        let windows = raw.compactMap { value -> VisibleWindow? in
-            guard let id = value[kCGWindowNumber as String] as? UInt32,
-                  let bounds = value[kCGWindowBounds as String] as? NSDictionary,
-                  let frame = CGRect(dictionaryRepresentation: bounds) else { return nil }
-            return VisibleWindow(id: id, frame: frame, layer: value[kCGWindowLayer as String] as? Int ?? -1, alpha: value[kCGWindowAlpha as String] as? Double ?? 1)
-        }
-        guard let top = WindowHitTest.topWindow(at: point, windows: windows), top.id == reading.id else {
-            throw RetryFailure.message("Another window covers the button in WoW. No click was sent.")
-        }
-        let currentFrame = top.frame
-        guard abs(currentFrame.minX-reading.frame.minX) < 1, abs(currentFrame.minY-reading.frame.minY) < 1,
-              abs(currentFrame.width-reading.frame.width) < 1, abs(currentFrame.height-reading.frame.height) < 1 else {
-            throw RetryFailure.message("The WoW window moved after it was read. No click was sent.")
-        }
+        try validate(reading, point: point, snapshot: environment.snapshot())
         // Games may cache the pointer position independently of mouse-down.
         let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)
         move?.setIntegerValueField(.eventSourceUserData, value: InputInterruption.automationMarker)
-        move?.post(tap: .cghidEventTap)
-        try await Task.sleep(nanoseconds: 120_000_000)
+        if let move { environment.post(move) }
+        try await environment.sleep(120_000_000)
         try Task.checkCancellation()
-        try SessionSafety.requireActive()
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == reading.pid else { throw RetryFailure.message("Another app took focus. No click was sent.") }
+        try validate(reading, point: point, snapshot: environment.snapshot())
         guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left), let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { throw RetryFailure.message("Could not prepare the click.") }
         down.setIntegerValueField(.mouseEventClickState, value: 1)
         up.setIntegerValueField(.mouseEventClickState, value: 1)
         down.setIntegerValueField(.eventSourceUserData, value: InputInterruption.automationMarker)
         up.setIntegerValueField(.eventSourceUserData, value: InputInterruption.automationMarker)
-        down.post(tap: .cghidEventTap)
+        environment.post(down)
         // A posted mouse-down is always paired with mouse-up, even after Stop.
-        try? await Task.sleep(nanoseconds: 60_000_000)
-        up.post(tap: .cghidEventTap)
+        try? await environment.sleep(60_000_000)
+        environment.post(up)
         try Task.checkCancellation()
     }
 }
