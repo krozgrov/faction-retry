@@ -43,16 +43,16 @@ See the [user guide](docs/USER_GUIDE.md) for settings and permission troubleshoo
 
 ## Privacy
 
-Screen images stay in memory and are processed locally with Apple Vision. The app captures the visible display area occupied by WoW or Battle.net; keep other windows out of that area. It does not save screenshots, upload screen data, store credentials, or modify game files. No API key is needed.
+Screen images stay in memory and are processed locally with Apple Vision. Capture is restricted to the selected WoW or Battle.net window. Other windows are excluded from the image, and covering the game content pauses reading. Stop, safety pauses, and completion clear the retained screenshot and recognized text. It does not save screenshots, upload screen data, store credentials, or modify game files. The local activity log is limited to 1 MiB with owner-only file permissions. No API key is needed.
 
 ## Test status
 
-Version 2.0.2 passed 56 automated checks covering screen recognition, retry timing, success detection, cooldowns, and OCR worker failures. Live testing verified a creation attempt, recognition and dismissal of the imbalance dialog, confirmation that it had closed, and return to the countdown.
+Version 2.0.7 passed 99 automated checks covering full-name success detection, process ownership, interruption handling, click delivery races, capture visibility, preview cleanup, bounded logs, and OCR worker failures. Earlier live testing verified a creation attempt, recognition and dismissal of the imbalance dialog, confirmation that it had closed, and return to the countdown.
 
 Successful creation and throttle-triggered Battle.net recovery have not been observed in live testing. A cursor or text caret over a name can interfere with the optional name check and cause a pause.
 
 ## Source
 
-The app is written in Swift with SwiftUI, ScreenCaptureKit, and Vision. `Sources/Core.swift` contains the recognition and timing rules; `Sources/App.swift` runs the interface and retry loop. `Sources/ScreenAccess.swift` handles capture and clicks, and `Sources/OCRHelper.swift` runs text recognition. Tests are in `Tests/`; `build.py` compiles, tests, and locally signs the app.
+The app is written in Swift with SwiftUI, ScreenCaptureKit, and Vision. `Sources/Core.swift` contains the recognition and timing rules; `Sources/App.swift` runs the interface and retry loop. `Sources/ActivityLog.swift` limits and protects the local log. `Sources/ScreenAccess.swift` handles capture and clicks, and `Sources/OCRHelper.swift` runs text recognition. Tests are in `Tests/`; `build.py` compiles, tests, and locally signs the app.
 
 Faction Retry is an independent project and is not affiliated with Blizzard Entertainment.

@@ -1,4 +1,4 @@
-# WoW Character Retry 2.0.2
+# WoW Character Retry 2.0.7
 
 Installed in **Applications → WoW Character Retry**. Requires Apple Silicon and macOS 14 or newer. The app uses Apple's built-in screen and text recognition tools; it needs no API key or extra software.
 
@@ -38,17 +38,17 @@ With relaunch disabled, throttle messages are dismissed and the app waits for th
 
 Click **Stop**, close the app, or press **Shift–Command–period**. Stop also terminates any running text-recognition helper. The last-attempt time and cooldown survive app restarts and manual stops. The configured interval is a minimum; reading the screen or waiting for WoW can make an attempt later.
 
-Settings are editable while stopped. The app can bring WoW forward at each attempt, allowing you to use other apps between attempts. Turn that option off to require WoW to stay active. A covered or moved window, unknown dialog, disconnection, failed reader, or unrecognized screen pauses the run instead of sending an uncertain click. The app keeps the display awake while a run is active.
+Only one app instance can run at a time. Manual typing or clicks in the game pause retries. Locking the Mac, sleep, and switching users also pause the run. Waking or unlocking does not resume it; press Start when ready. Settings are editable while stopped. The app can bring WoW forward at each attempt, allowing you to use other apps between attempts. Turn that option off to require WoW to stay active. A covered or moved window, unknown dialog, disconnection, failed reader, or unrecognized screen pauses the run instead of sending an uncertain click. The app keeps the display awake while a run is active.
 
 ## Privacy and diagnostics
 
-The visible screen area occupied by the selected WoW or Battle.net window is captured. Keep the window fully on one display and unobscured. Image data stays in memory and is passed to a local helper; it is never uploaded or saved as a screenshot. The helper has a 12-second deadline and is killed on timeout or cancellation, so a stalled reader cannot freeze the interface.
+Capture is filtered to the selected WoW or Battle.net window. Other windows are excluded from the image. The app checks for windows covering game content before and after capture; if coverage or movement is detected, it pauses and discards the image before recognition. Keep the window fully on one display and unobscured. Image data stays in memory and is passed to a local helper; it is never uploaded or saved as a screenshot. The helper has a 12-second deadline and is killed on timeout or cancellation, so a stalled reader cannot freeze the interface.
 
-**Activity** shows what happened. **What the app sees (no clicks)** displays the captured image and recognized text locally for diagnosis. **Show log** opens the local activity log. The app does not modify game files or store account credentials.
+**Activity** shows what happened. **What the app sees (no clicks)** displays the captured image and recognized text locally for diagnosis. Stop, safety pauses, and completion clear the retained image and recognized text. **Show log** opens the local activity log, which is limited to 1 MiB and readable only by your Mac user account. Oversized old logs are trimmed on their next write. The app does not modify game files or store account credentials.
 
 ## Validation
 
-The app passed 56 automated checks, including delayed server replies and prevention of duplicate submissions while waiting, covering the observed faction message through real OCR, character-editor recognition, unknown dialogs, throttle detection, selected-version verification, configurable timing, persisted cooldowns, success guards, large OCR results, helper cancellation, and helper timeout. Its layout, saved duration, and Start behavior were also checked in the running Mac app. Live screen recognition correctly identified the exact faction-imbalance dialog and the prepared character editor. Stop was also tested during an interrupted 8 MB image transfer. Window checks were tested with other monitors and the small screen-sharing badge, so unrelated windows cannot block Finish.
+Version 2.0.7 passed 99 automated checks, including delayed server replies and prevention of duplicate submissions while waiting, covering the observed faction message through real OCR, character-editor recognition, unknown dialogs, throttle detection, selected-version verification, configurable timing, persisted cooldowns, success guards, large OCR results, helper cancellation, and helper timeout. Its layout, saved duration, and Start behavior were also checked in the running Mac app. Live screen recognition correctly identified the exact faction-imbalance dialog and the prepared character editor. Stop was also tested during an interrupted 8 MB image transfer. Window checks were tested with other monitors and the small screen-sharing badge, while windows actually covering the button block input.
 
 Live testing confirmed that version 2.0.2 closed the actual imbalance dialog and verified its absence on two readings. Version 2.0.2 captures the visible game area, improves recognition of gold text, and verifies dialog dismissal instead of assuming a sent click succeeded. A gold-and-cyan arcane retry-clock icon is installed.
 

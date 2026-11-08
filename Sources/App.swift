@@ -36,6 +36,7 @@ struct Activity: Identifiable {
     private var hasPowerAssertion = false
     private let defaults: UserDefaults
     private let logURL: URL
+    private let activityLog: ActivityLog
     private var targetFrame: CGRect?
     private var inputMonitors: [Any] = []
     private var workspaceObservers: [NSObjectProtocol] = []
@@ -47,8 +48,9 @@ struct Activity: Identifiable {
         schedule = defaults.data(forKey: "v2.schedule").flatMap { try? JSONDecoder().decode(RetrySchedule.self, from: $0) } ?? RetrySchedule()
         restarts = defaults.integer(forKey: "v2.restarts")
         let directory = logDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("WoWRetry")
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         logURL = directory.appendingPathComponent("activity.log")
+        activityLog = ActivityLog(url: logURL)
         clickAccess = CGPreflightPostEventAccess()
         screenAccess = CGPreflightScreenCaptureAccess()
         record("App opened. No game actions have been sent.")
@@ -100,9 +102,7 @@ struct Activity: Identifiable {
     func record(_ value: String) {
         activities.insert(Activity(text: value), at: 0)
         if activities.count > 200 { activities.removeLast() }
-        let line = "\(ISO8601DateFormatter().string(from: Date()))  \(value)\n"
-        if !FileManager.default.fileExists(atPath: logURL.path) { FileManager.default.createFile(atPath: logURL.path, contents: nil) }
-        if let handle = try? FileHandle(forWritingTo: logURL) { _ = try? handle.seekToEnd(); try? handle.write(contentsOf: Data(line.utf8)); try? handle.close() }
+        try? activityLog.append("\(ISO8601DateFormatter().string(from: Date()))  \(value)")
     }
     private func set(_ next: RunPhase, _ value: String, log: Bool = true) {
         phase = next; message = value
@@ -110,13 +110,16 @@ struct Activity: Identifiable {
     }
     func stop(_ reason: String = "Stopped. Your next-attempt time is retained.") {
         generation += 1; task?.cancel(); task = nil; countdown = "—"
+        clearPreview()
         releaseAwake()
         set(.paused, reason)
     }
     private func finished(_ phase: RunPhase, _ text: String) {
+        if phase != .idle { clearPreview() }
         task = nil; countdown = "—"; releaseAwake(); set(phase, text)
         if phase == .complete { NSSound.beep() }
     }
+    private func clearPreview() { lastReadImage = nil; lastReadText = "" }
     private func preventIdleSleep() {
         if !hasPowerAssertion {
             hasPowerAssertion = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), "WoW character retry in progress" as CFString, &powerAssertion) == kIOReturnSuccess
@@ -161,6 +164,7 @@ struct Activity: Identifiable {
     }
     func inspect() {
         guard !phase.busy else { return }
+        clearPreview()
         generation += 1; let run = generation; targetWindow = nil
         set(.reading, "Reading your current WoW screen. This test sends no clicks.")
         task = Task {
@@ -179,6 +183,7 @@ struct Activity: Identifiable {
     }
     func start() {
         guard !phase.busy else { return }
+        clearPreview()
         guard SessionSafety.isActive else { set(.paused, "Unlock your Mac and return to this user session before starting."); return }
         guard AXIsProcessTrusted() else { set(.needsAccess, "Enable Device Control/Accessibility so manual game input can pause retries safely."); return }
         if let invalid = settings.validationError { set(.paused, invalid); return }
@@ -469,7 +474,7 @@ struct RetryView: View {
                         Text(model.lastReadText.isEmpty ? "Use Read screen to inspect WoW without pressing buttons." : model.lastReadText).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                     }.padding(.top, 8)
                 }
-                Text("Reads the visible game or Battle.net window area. Screens stay in memory and are never uploaded. Unknown errors pause the run. Your chosen character options are never edited.")
+                Text("Captures only the selected game or Battle.net window. Screens stay in memory; Stop clears the preview. Unknown errors pause the run. Your chosen character options are never edited.")
                     .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }.padding(28)
         }.frame(minWidth: 680, minHeight: 690)

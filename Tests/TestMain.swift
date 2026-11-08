@@ -33,6 +33,12 @@ import UniformTypeIdentifiers
         check(WindowHitTest.topWindow(at: CGPoint(x: 5000, y: 5000), windows: [gameWindow]) == nil, "Off-window points are never treated as the target")
         check(CaptureGeometry.crop(window: CGRect(x: -2880, y: 30, width: 1440, height: 928), display: CGRect(x: -2880, y: 0, width: 1440, height: 960)) == CGRect(x: 0, y: 30, width: 1440, height: 928), "Visible capture maps a negative-coordinate display correctly")
         check(CaptureGeometry.crop(window: CGRect(x: -20, y: 30, width: 1440, height: 800), display: CGRect(x: 0, y: 0, width: 1440, height: 960)) == nil, "A window split across displays is not miscaptured")
+        check(CaptureVisibility.isClear(id: gameWindow.id, frame: gameWindow.frame, windows: [otherMonitor, sharingBadge, gameWindow]), "Other monitors and title-bar sharing badge do not block reading")
+        check(!CaptureVisibility.isClear(id: gameWindow.id, frame: gameWindow.frame, windows: [blocking, gameWindow]), "An overlapping app blocks capture before recognition")
+        check(CaptureVisibility.isClear(id: gameWindow.id, frame: gameWindow.frame, windows: [gameWindow, blocking]), "A window behind the game does not block capture")
+        check(CaptureVisibility.isClear(id: gameWindow.id, frame: gameWindow.frame, windows: [transparent, gameWindow]), "A fully transparent window does not block capture")
+        check(!CaptureVisibility.isClear(id: gameWindow.id, frame: gameWindow.frame.offsetBy(dx: 10, dy: 0), windows: [gameWindow]), "Movement during capture discards the image")
+        check(!CaptureVisibility.isClear(id: gameWindow.id, frame: gameWindow.frame, windows: []), "A vanished game window cannot be read")
         let fullName = word("Full Name", y: 0.92)
         let okay = word("Okay", y: 0.43)
         let imbalance = [word("This faction is currently unavailable on this"), word("ruleset due to population imbalance.", y: 0.45), okay, finish, fullName]
@@ -167,6 +173,33 @@ import UniformTypeIdentifiers
         clickTask.cancel()
         do { try await clickTask.value; fatalError("Cancelled click did not stop") }
         catch is CancellationError { check(delivered.last == .leftMouseUp, "Stop after mouse-down still releases the mouse button") }
+        model.lastReadImage = Data([1, 2, 3]); model.lastReadText = "Private preview"
+        model.stop()
+        check(model.lastReadImage == nil && model.lastReadText.isEmpty, "Stop removes both the retained screenshot and OCR text")
+        model.lastReadImage = Data([4]); model.lastReadText = "Private preview"; model.phase = .waiting
+        model.interrupt("Manual input")
+        check(model.lastReadImage == nil && model.lastReadText.isEmpty, "An automatic safety pause also removes the preview")
+        let boundedURL = modelDirectory.appendingPathComponent("bounded.log")
+        let boundedLog = ActivityLog(url: boundedURL, maximumBytes: 512)
+        for entry in 0..<50 { try boundedLog.append("Entry \(entry) " + String(repeating: "word ", count: 8)) }
+        let boundedData = try Data(contentsOf: boundedURL)
+        check(boundedData.count <= 512 && String(data: boundedData, encoding: .utf8)!.contains("Entry 49 ") && !String(data: boundedData, encoding: .utf8)!.contains("Entry 0 "), "Log keeps recent entries within its byte limit")
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: boundedURL.path)
+        try boundedLog.append(String(repeating: "🐮", count: 1000))
+        let unicodeData = try Data(contentsOf: boundedURL)
+        check(unicodeData.count <= 512 && String(data: unicodeData, encoding: .utf8) != nil, "An oversized Unicode entry remains valid and bounded")
+        let permissions = try FileManager.default.attributesOfItem(atPath: boundedURL.path)[.posixPermissions] as! NSNumber
+        check(permissions.intValue == 0o600, "Log writes enforce owner-only access")
+        try Data(repeating: 65, count: 4_000_000).write(to: boundedURL)
+        try boundedLog.append("Recovered after an old oversized log")
+        let recoveredLog = try Data(contentsOf: boundedURL)
+        check(recoveredLog.count <= 512, "An existing oversized log is trimmed on its next write")
+        let sentinel = modelDirectory.appendingPathComponent("sentinel")
+        try Data("untouched".utf8).write(to: sentinel)
+        let logLink = modelDirectory.appendingPathComponent("link.log")
+        try FileManager.default.createSymbolicLink(at: logLink, withDestinationURL: sentinel)
+        do { try ActivityLog(url: logLink).append("must not write"); fatalError("Log symlink followed") }
+        catch { let untouched = try String(contentsOf: sentinel); check(untouched == "untouched", "A symlink log cannot overwrite another file") }
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let fake = root.appendingPathComponent("FakeReader")
         let helper = root.appendingPathComponent("WoWTextReader")

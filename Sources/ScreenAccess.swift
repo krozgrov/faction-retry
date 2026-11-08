@@ -94,6 +94,7 @@ final class OCRProcess: @unchecked Sendable {
 actor WindowReader {
     func read(pid: pid_t, windowID: CGWindowID? = nil) async throws -> WindowReading {
         try Task.checkCancellation()
+        try SessionSafety.requireActive()
         let content: SCShareableContent
         do { content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) }
         catch {
@@ -106,22 +107,30 @@ actor WindowReader {
         guard let display = content.displays.first(where: { CaptureGeometry.crop(window: window.frame, display: $0.frame) != nil }) else {
             throw RetryFailure.message("Keep the game window fully on one display so its visible area can be read accurately.")
         }
+        guard CaptureVisibility.isClear(id: window.windowID, frame: window.frame, windows: WindowInventory.current()) else {
+            throw RetryFailure.message("Another window covers the game content, or the game moved. Clear its window, then try again. No image was read.")
+        }
         let configuration = SCStreamConfiguration()
         let scale = min(2, 2400 / window.frame.width)
         configuration.width = Int(window.frame.width * scale)
         configuration.height = Int(window.frame.height * scale)
         configuration.showsCursor = false
+        configuration.capturesAudio = false
         configuration.sourceRect = CaptureGeometry.crop(window: window.frame, display: display.frame)!
         let capturedAt = Date()
         let image: CGImage
-        // Read the composited, visible window area. A desktop-independent
-        // capture can omit surfaces/overlays in hardware-rendered games.
-        do { image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: display, excludingWindows: []), configuration: configuration) }
+        // Keep display-based game rendering, but allow only the selected window
+        // into the image. Newly appearing windows from other apps stay excluded.
+        do { image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: display, including: [window]), configuration: configuration) }
         catch {
             if (error as NSError).code == -3801 { throw RetryFailure.captureDenied }
             throw RetryFailure.message("Window capture failed: \(error.localizedDescription)")
         }
         try Task.checkCancellation()
+        try SessionSafety.requireActive()
+        guard CaptureVisibility.isClear(id: window.windowID, frame: window.frame, windows: WindowInventory.current()) else {
+            throw RetryFailure.message("The game moved or became covered during capture. The image was discarded without text recognition.")
+        }
         let bytes = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(bytes, UTType.png.identifier as CFString, 1, nil) else { throw RetryFailure.message("Could not prepare the WoW window for reading.") }
         CGImageDestinationAddImage(destination, image, nil)
