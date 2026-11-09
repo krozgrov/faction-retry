@@ -47,7 +47,7 @@ Screen images stay in memory and are processed locally with Apple Vision. Captur
 
 ## Test status
 
-Version 2.0.7 passed 99 automated checks covering full-name success detection, process ownership, interruption handling, click delivery races, capture visibility, preview cleanup, bounded logs, and OCR worker failures. Earlier live testing verified a creation attempt, recognition and dismissal of the imbalance dialog, confirmation that it had closed, and return to the countdown.
+Version 2.0.7 passed 101 automated checks covering full-name success detection, process ownership, interruption handling, click delivery races, capture visibility, preview cleanup, bounded logs, and OCR worker failures. Earlier live testing verified a creation attempt, recognition and dismissal of the imbalance dialog, confirmation that it had closed, and return to the countdown.
 
 Successful creation and throttle-triggered Battle.net recovery have not been observed in live testing. A cursor or text caret over a name can interfere with the optional name check and cause a pause.
 

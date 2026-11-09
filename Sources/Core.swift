@@ -55,10 +55,13 @@ struct VisibleWindow {
     let frame: CGRect
     let layer: Int
     let alpha: Double
+    // Recent macOS versions expose cursor surfaces in the window list. They
+    // cannot cover or receive a game click and are already excluded from capture.
+    var canObstruct: Bool { layer >= 0 && layer < Int(CGWindowLevelForKey(.cursorWindow)) && alpha > 0.01 && frame.width > 1 && frame.height > 1 }
 }
 enum WindowHitTest {
     static func topWindow(at point: CGPoint, windows: [VisibleWindow]) -> VisibleWindow? {
-        windows.first { $0.layer >= 0 && $0.alpha > 0.01 && $0.frame.width > 1 && $0.frame.height > 1 && $0.frame.contains(point) }
+        windows.first { $0.canObstruct && $0.frame.contains(point) }
     }
 }
 enum CaptureGeometry {
@@ -78,7 +81,7 @@ enum CaptureVisibility {
         // from the capture filter; any overlap with game content still blocks.
         let content = CGRect(x: frame.minX, y: frame.minY+28, width: frame.width, height: frame.height-28)
         return !windows[..<index].contains {
-            $0.layer >= 0 && $0.alpha > 0.01 && $0.frame.width > 1 && $0.frame.height > 1 && content.intersects($0.frame)
+            $0.canObstruct && content.intersects($0.frame)
         }
     }
 }

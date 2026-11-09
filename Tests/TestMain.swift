@@ -39,6 +39,9 @@ import UniformTypeIdentifiers
         check(CaptureVisibility.isClear(id: gameWindow.id, frame: gameWindow.frame, windows: [transparent, gameWindow]), "A fully transparent window does not block capture")
         check(!CaptureVisibility.isClear(id: gameWindow.id, frame: gameWindow.frame.offsetBy(dx: 10, dy: 0), windows: [gameWindow]), "Movement during capture discards the image")
         check(!CaptureVisibility.isClear(id: gameWindow.id, frame: gameWindow.frame, windows: []), "A vanished game window cannot be read")
+        let cursorWindow = VisibleWindow(id: 99, frame: gameWindow.frame, layer: Int(CGWindowLevelForKey(.cursorWindow)), alpha: 1)
+        check(CaptureVisibility.isClear(id: gameWindow.id, frame: gameWindow.frame, windows: [cursorWindow, gameWindow]), "The macOS cursor surface does not cover the game for capture")
+        check(WindowHitTest.topWindow(at: clickPoint, windows: [cursorWindow, gameWindow])?.id == gameWindow.id, "The cursor surface cannot intercept a game click")
         let fullName = word("Full Name", y: 0.92)
         let okay = word("Okay", y: 0.43)
         let imbalance = [word("This faction is currently unavailable on this"), word("ruleset due to population imbalance.", y: 0.45), okay, finish, fullName]
