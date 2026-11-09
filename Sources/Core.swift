@@ -55,16 +55,34 @@ struct VisibleWindow {
     let frame: CGRect
     let layer: Int
     let alpha: Double
+    // Recent macOS versions expose cursor surfaces in the window list. They
+    // cannot cover or receive a game click and are already excluded from capture.
+    var canObstruct: Bool { layer >= 0 && layer < Int(CGWindowLevelForKey(.cursorWindow)) && alpha > 0.01 && frame.width > 1 && frame.height > 1 }
 }
 enum WindowHitTest {
     static func topWindow(at point: CGPoint, windows: [VisibleWindow]) -> VisibleWindow? {
-        windows.first { $0.layer >= 0 && $0.alpha > 0.01 && $0.frame.width > 1 && $0.frame.height > 1 && $0.frame.contains(point) }
+        windows.first { $0.canObstruct && $0.frame.contains(point) }
     }
 }
 enum CaptureGeometry {
     static func crop(window: CGRect, display: CGRect) -> CGRect? {
         guard display.insetBy(dx: -1, dy: -1).contains(window) else { return nil }
         return window.offsetBy(dx: -display.minX, dy: -display.minY)
+    }
+}
+
+enum CaptureVisibility {
+    static func isClear(id: UInt32, frame: CGRect, windows: [VisibleWindow]) -> Bool {
+        guard let index = windows.firstIndex(where: { $0.id == id }), frame.width > 0, frame.height > 28 else { return false }
+        let current = windows[index].frame
+        guard abs(current.minX-frame.minX) < 1, abs(current.minY-frame.minY) < 1,
+              abs(current.width-frame.width) < 1, abs(current.height-frame.height) < 1 else { return false }
+        // macOS can put its sharing badge over the title bar. It is excluded
+        // from the capture filter; any overlap with game content still blocks.
+        let content = CGRect(x: frame.minX, y: frame.minY+28, width: frame.width, height: frame.height-28)
+        return !windows[..<index].contains {
+            $0.canObstruct && content.intersects($0.frame)
+        }
     }
 }
 
